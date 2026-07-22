@@ -75,9 +75,6 @@ def stable_softmax(values):
 
 # --- case handlers ---
 
-def _classify(valid_classifications, name):
-    return name if name in valid_classifications else "fail"
-
 def handle_runtime_and_dependency_marker(method):
     obs = {}
     if method == "inspect_inputs":
@@ -368,15 +365,19 @@ HANDLERS = {
 
 VALID_CLASSIFICATIONS = {"pass","expected_equal","expected_close","expected_rejection","expected_nonfinite","local_observation","context_only","dependency_skip","not_applicable","fail"}
 
-def build_rows():
-    rows = []
-    # load expected map
+def _load_expected_map(expected_map_override=None):
+    if expected_map_override is not None:
+        return expected_map_override
     try:
         with open("cases.json","r",encoding="utf-8") as f:
             cases_doc = json.load(f)
-        expected_map = cases_doc.get("expected_classifications", {})
+        return cases_doc.get("expected_classifications", {})
     except Exception:
-        expected_map = {}
+        return {}
+
+def build_rows(expected_map_override=None):
+    rows = []
+    expected_map = _load_expected_map(expected_map_override)
     for case_id in CASE_IDS:
         handler = HANDLERS.get(case_id)
         for method_id in METHOD_IDS:
@@ -387,10 +388,16 @@ def build_rows():
                 observation = {"reason": "missing handler"}
             else:
                 try:
-                    actual_classification, observation = handler(method_id)
-                    if actual_classification not in VALID_CLASSIFICATIONS:
+                    result = handler(method_id)
+                    # handler must return a 2-tuple
+                    if not isinstance(result, tuple) or len(result) != 2:
                         actual_classification = "fail"
-                        observation = {"reason": "invalid classification"}
+                        observation = {"reason": "missing classification"}
+                    else:
+                        actual_classification, observation = result
+                        if actual_classification not in VALID_CLASSIFICATIONS:
+                            actual_classification = "fail"
+                            observation = {"reason": "invalid classification"}
                 except Exception as e:
                     actual_classification = "fail"
                     observation = {"reason": type(e).__name__}
@@ -411,17 +418,39 @@ def main():
     # counts
     from collections import Counter
     counts = Counter(r["actual_classification"] for r in rows)
-    # build RESULTS.md
-    def get_obs(case, method):
+    # helper to get row
+    def get_row(case, method):
         for r in rows:
             if r["case_id"]==case and r["method_id"]==method:
-                return r["observation"]
-        return {}
-    mv_obs = get_obs("matrix_vector_reference_marker","verify_relation")
-    shape_obs = get_obs("matrix_vector_shape_contract_marker","verify_relation")
-    softmax_obs = get_obs("stable_softmax_shift_invariance_marker","verify_relation")
-    naive_obs = get_obs("naive_softmax_overflow_marker","verify_relation")
-    float_obs = get_obs("floating_comparison_policy_marker","verify_relation")
+                return r
+        return None
+    def get_obs(case, method):
+        row = get_row(case, method)
+        return row["observation"] if row else {}
+    def get_actual(case, method):
+        row = get_row(case, method)
+        return row["actual_classification"] if row else "fail"
+
+    mv_row = get_row("matrix_vector_reference_marker","verify_relation")
+    mv_obs = mv_row["observation"] if mv_row else {}
+    mv_actual = mv_row["actual_classification"] if mv_row else "fail"
+
+    shape_row = get_row("matrix_vector_shape_contract_marker","verify_relation")
+    shape_obs = shape_row["observation"] if shape_row else {}
+    shape_actual = shape_row["actual_classification"] if shape_row else "fail"
+
+    softmax_row = get_row("stable_softmax_shift_invariance_marker","verify_relation")
+    softmax_obs = softmax_row["observation"] if softmax_row else {}
+    softmax_actual = softmax_row["actual_classification"] if softmax_row else "fail"
+
+    naive_row = get_row("naive_softmax_overflow_marker","verify_relation")
+    naive_obs = naive_row["observation"] if naive_row else {}
+    naive_actual = naive_row["actual_classification"] if naive_row else "fail"
+
+    float_row = get_row("floating_comparison_policy_marker","verify_relation")
+    float_obs = float_row["observation"] if float_row else {}
+    float_actual = float_row["actual_classification"] if float_row else "fail"
+
     lines = []
     lines.append("# RESULTS")
     lines.append("")
@@ -442,31 +471,71 @@ def main():
     lines.append("")
     lines.append("## Observations")
     lines.append("")
+
+    # Matrix-vector reference
     lines.append("### Matrix-vector reference")
-    lines.append("Input matrix [[1.0, 2.0], [3.0, 4.0]], vector [5.0, 6.0]")
-    lines.append("manual_matvec result: [17.0, 39.0]")
-    lines.append("numpy.matmul result: [17.0, 39.0]")
-    lines.append("Classification: expected_equal")
+    if mv_actual == "dependency_skip":
+        lines.append("NumPy unavailable – dependency_skip.")
+    elif mv_actual == "expected_equal" and mv_obs.get("manual_result") is not None:
+        mr = mv_obs.get("manual_result")
+        nr = mv_obs.get("numpy_result")
+        lines.append(f"manual_matvec result: {json.dumps(mr)}")
+        lines.append(f"numpy.matmul result: {json.dumps(nr)}")
+        lines.append(f"Classification: {mv_actual}")
+    elif mv_actual == "fail":
+        lines.append(f"Classification: fail – {mv_obs.get('reason','unknown')}")
+    else:
+        lines.append(f"Classification: {mv_actual}")
     lines.append("")
+
+    # Shape contract
     lines.append("### Shape contract")
-    lines.append("Rejected incompatible shapes (2×3 matrix, length-2 vector) in both manual_matvec and numpy.matmul.")
-    lines.append("Classification: expected_rejection")
+    if shape_actual == "dependency_skip":
+        lines.append("NumPy unavailable – dependency_skip.")
+    elif shape_actual == "expected_rejection":
+        lines.append(f"manual_rejected={shape_obs.get('manual_rejected')}, numpy_rejected={shape_obs.get('numpy_rejected')}")
+        lines.append(f"Classification: {shape_actual}")
+    elif shape_actual == "fail":
+        lines.append(f"Classification: fail – {shape_obs.get('reason','unknown')}")
+    else:
+        lines.append(f"Classification: {shape_actual}")
     lines.append("")
+
+    # Stable softmax
     lines.append("### Stable softmax shift invariance")
-    lines.append("Logits [1000.0, 1001.0, 1002.0] vs shifted [0.0, 1.0, 2.0]")
-    lines.append(f"Output finite, sums ≈ 1.0, assert_allclose passes (rtol={RTOL}, atol={ATOL}).")
-    lines.append("Input arrays not mutated.")
-    lines.append("Classification: expected_close")
+    if softmax_actual == "dependency_skip":
+        lines.append("NumPy unavailable – dependency_skip.")
+    elif softmax_actual in ("expected_close", "fail", "pass"):
+        out_logits = softmax_obs.get("output_logits")
+        out_shifted = softmax_obs.get("output_shifted")
+        if out_logits is not None:
+            lines.append(f"output_logits: {json.dumps(out_logits)}")
+        if out_shifted is not None:
+            lines.append(f"output_shifted: {json.dumps(out_shifted)}")
+        lines.append(f"finite={softmax_obs.get('finite')}, close_match={softmax_obs.get('close_match')}, input_unmutated={softmax_obs.get('input_unmutated')}")
+        lines.append(f"Classification: {softmax_actual}")
+    else:
+        lines.append(f"Classification: {softmax_actual}")
     lines.append("")
+
+    # Naive softmax overflow
     lines.append("### Naive softmax overflow")
-    lines.append("Naive exp([1000,1001,1002]) produced nonfinite values; stable_softmax produced finite values summing ≈ 1.0.")
-    lines.append("Classification: expected_nonfinite")
+    if naive_actual == "dependency_skip":
+        lines.append("NumPy unavailable – dependency_skip.")
+    else:
+        lines.append(f"naive_has_nonfinite={naive_obs.get('naive_has_nonfinite')}, stable_all_finite={naive_obs.get('stable_all_finite')}, stable_sum_close_to_one={naive_obs.get('stable_sum_close_to_one')}")
+        lines.append(f"Classification: {naive_actual}")
     lines.append("")
+
+    # Floating comparison
     lines.append("### Floating comparison policy")
-    lines.append("left [0.1+0.2, 1.0] vs right [0.3, 1.0]")
-    lines.append("numpy.array_equal: False; numpy.testing.assert_allclose: True")
-    lines.append("Classification: expected_close")
+    if float_actual == "dependency_skip":
+        lines.append("NumPy unavailable – dependency_skip.")
+    else:
+        lines.append(f"exact_equal={float_obs.get('exact_equal')}, close_ok={float_obs.get('close_ok')}")
+        lines.append(f"Classification: {float_actual}")
     lines.append("")
+
     lines.append("## Evidence separation")
     lines.append("")
     lines.append("Hacker News commenters argued:")
@@ -496,11 +565,19 @@ def main():
     lines.append(f"- NumPy available={NUMPY_AVAILABLE}, version={NUMPY_VERSION}")
     lines.append("")
     lines.append("Lab directly observed:")
-    lines.append("- manual_matvec agrees with numpy.matmul for the fixed 2×2 example.")
-    lines.append("- Both implementations reject the shape mismatch.")
-    lines.append("- stable_softmax shift invariance holds approximately for the fixed inputs.")
-    lines.append("- Naive softmax overflows on [1000,1001,1002]; stable version is finite and sums ≈1.")
-    lines.append("- Exact equality differs from approximate equality for [0.1+0.2, 1.0] vs [0.3, 1.0].")
+    # only list observations that actually passed
+    if mv_actual == "expected_equal":
+        lines.append("- manual_matvec agrees with numpy.matmul for the fixed 2×2 example.")
+    if shape_actual == "expected_rejection":
+        lines.append("- Both implementations reject the shape mismatch.")
+    if softmax_actual == "expected_close":
+        lines.append("- stable_softmax shift invariance holds approximately for the fixed inputs.")
+    if naive_actual == "expected_nonfinite":
+        lines.append("- Naive softmax overflows on [1000,1001,1002]; stable version is finite and sums ≈1.")
+    if float_actual == "expected_close":
+        lines.append("- Exact equality differs from approximate equality for [0.1+0.2, 1.0] vs [0.3, 1.0].")
+    if not NUMPY_AVAILABLE:
+        lines.append("- NumPy unavailable – numerical cases skipped.")
     lines.append("")
     lines.append("Lab did not test:")
     lines.append("- Other dtypes, batch shapes, sparse inputs, complex values, NaN/Inf handling, accelerators, or production workloads.")

@@ -25,28 +25,26 @@ Rows: 21
 ## Observations
 
 ### Matrix-vector reference
-Input matrix [[1.0, 2.0], [3.0, 4.0]], vector [5.0, 6.0]
 manual_matvec result: [17.0, 39.0]
 numpy.matmul result: [17.0, 39.0]
 Classification: expected_equal
 
 ### Shape contract
-Rejected incompatible shapes (2×3 matrix, length-2 vector) in both manual_matvec and numpy.matmul.
+manual_rejected=True, numpy_rejected=True
 Classification: expected_rejection
 
 ### Stable softmax shift invariance
-Logits [1000.0, 1001.0, 1002.0] vs shifted [0.0, 1.0, 2.0]
-Output finite, sums ≈ 1.0, assert_allclose passes (rtol=1e-12, atol=1e-12).
-Input arrays not mutated.
+output_logits: [0.09003057317038046, 0.24472847105479764, 0.6652409557748218]
+output_shifted: [0.09003057317038046, 0.24472847105479764, 0.6652409557748218]
+finite=True, close_match=True, input_unmutated=True
 Classification: expected_close
 
 ### Naive softmax overflow
-Naive exp([1000,1001,1002]) produced nonfinite values; stable_softmax produced finite values summing ≈ 1.0.
+naive_has_nonfinite=True, stable_all_finite=True, stable_sum_close_to_one=True
 Classification: expected_nonfinite
 
 ### Floating comparison policy
-left [0.1+0.2, 1.0] vs right [0.3, 1.0]
-numpy.array_equal: False; numpy.testing.assert_allclose: True
+exact_equal=False, close_ok=True
 Classification: expected_close
 
 ## Evidence separation

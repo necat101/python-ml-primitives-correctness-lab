@@ -61,36 +61,42 @@ class TestLab(unittest.TestCase):
         for r in rows:
             self.assertIn("expected_classification", r)
             self.assertIn("actual_classification", r)
-            # fields exist and are separate keys – already checked
 
     def test_production_independence(self):
-        # copy expectation map, mutate
-        with open("cases.json","r",encoding="utf-8") as f:
-            doc = json.load(f)
-        original_map = doc.get("expected_classifications", {})
-        # build real rows
+        # build with real expectation map
         rows1 = run_lab.build_rows()
-        # simulate mutated expectation map (should not affect actuals)
-        mutated = {k: "pass" for k in original_map}
-        # rebuild rows – production does not read expected_map except to echo it
-        rows2 = run_lab.build_rows()
-        # inputs, outputs, observations, applicability, actual classifications must be unchanged
+        # build with a completely replaced expectation map
+        # every expected_classification should be different from the original
+        mutated = {}
+        all_valid = list(run_lab.VALID_CLASSIFICATIONS)
+        for k, v in EXPECTED_MAP.items():
+            # pick a different valid classification
+            for candidate in all_valid:
+                if candidate != v:
+                    mutated[k] = candidate
+                    break
+        rows2 = run_lab.build_rows(expected_map_override=mutated)
+        # verify expected_classification fields changed
+        changed_expected = False
+        for a, b in zip(rows1, rows2):
+            if a["expected_classification"] != b["expected_classification"]:
+                changed_expected = True
+                break
+        self.assertTrue(changed_expected, "mutated expectation map had no effect on expected_classification field")
+        # production outputs must remain unchanged
         for a, b in zip(rows1, rows2):
             self.assertEqual(a["case_id"], b["case_id"])
             self.assertEqual(a["method_id"], b["method_id"])
-            self.assertEqual(a["actual_classification"], b["actual_classification"])
-            self.assertEqual(a["observation"], b["observation"])
+            self.assertEqual(a["actual_classification"], b["actual_classification"], f"actual classification changed for {a['case_id']}:{a['method_id']}")
+            self.assertEqual(a["observation"], b["observation"], f"observation changed for {a['case_id']}:{a['method_id']}")
 
     def test_missing_handler_failure(self):
-        # copy registry
         orig = run_lab.HANDLERS.copy()
         try:
-            # remove one real handler
             del run_lab.HANDLERS["matrix_vector_reference_marker"]
             rows = run_lab.build_rows()
             fails = [r for r in rows if r["case_id"]=="matrix_vector_reference_marker" and r["actual_classification"]=="fail"]
             self.assertTrue(len(fails) >= 1)
-            # check reason contains missing handler
             self.assertTrue(any("missing handler" in str(r["observation"].get("reason","")).lower() for r in fails))
         finally:
             run_lab.HANDLERS.clear()
@@ -108,6 +114,24 @@ class TestLab(unittest.TestCase):
             self.assertTrue(any("invalid classification" in str(r["observation"].get("reason","")).lower() for r in fails))
         finally:
             run_lab.HANDLERS["floating_comparison_policy_marker"] = orig
+
+    def test_missing_classification_failure(self):
+        # handler returns wrong shape / missing classification
+        orig = run_lab.HANDLERS.get("floating_comparison_policy_marker")
+        def bad_handler_no_class(method):
+            # missing classification – return None / wrong tuple
+            return (None, {})
+        def bad_handler_wrong_tuple(method):
+            return ["oops"]
+        for bad in (bad_handler_no_class, bad_handler_wrong_tuple):
+            try:
+                run_lab.HANDLERS["floating_comparison_policy_marker"] = bad
+                rows = run_lab.build_rows()
+                fails = [r for r in rows if r["case_id"]=="floating_comparison_policy_marker" and r["actual_classification"]=="fail"]
+                self.assertTrue(len(fails) >= 1)
+                self.assertTrue(any("missing classification" in str(r["observation"].get("reason","")).lower() or "invalid classification" in str(r["observation"].get("reason","")).lower() for r in fails))
+            finally:
+                run_lab.HANDLERS["floating_comparison_policy_marker"] = orig
 
     def test_deterministic_row_ordering(self):
         r1 = run_lab.build_rows()
@@ -193,7 +217,6 @@ class TestLab(unittest.TestCase):
         import numpy as np
         left = np.array([0.1+0.2, 1.0], dtype=np.float64)
         right = np.array([0.3, 1.0], dtype=np.float64)
-        # should not raise
         np.testing.assert_allclose(left, right, rtol=1e-12, atol=1e-12)
 
     def test_observations_json_agreement(self):
@@ -206,12 +229,53 @@ class TestLab(unittest.TestCase):
         with open("RESULTS.md","r",encoding="utf-8") as f:
             text = f.read()
         rows = run_lab.build_rows()
+        # row counts and classification totals
         self.assertIn(f"Rows: {len(rows)}", text)
         from collections import Counter
         counts = Counter(r["actual_classification"] for r in rows)
         for cls in run_lab.VALID_CLASSIFICATIONS:
             needle = f"- {cls}: {counts.get(cls,0)}"
             self.assertIn(needle, text, needle)
+        # substantive observation agreement – build row map
+        row_map = {(r["case_id"], r["method_id"]): r for r in rows}
+        # matrix-vector
+        mv = row_map.get(("matrix_vector_reference_marker", "verify_relation"))
+        if mv and mv["actual_classification"] == "expected_equal":
+            obs = mv["observation"]
+            mr = obs.get("manual_result")
+            nr = obs.get("numpy_result")
+            if mr is not None:
+                self.assertIn(json.dumps(mr), text, "manual_matvec result not in RESULTS.md")
+            if nr is not None:
+                self.assertIn(json.dumps(nr), text, "numpy.matmul result not in RESULTS.md")
+        # shape contract
+        shape = row_map.get(("matrix_vector_shape_contract_marker", "verify_relation"))
+        if shape:
+            obs = shape["observation"]
+            if "manual_rejected" in obs:
+                self.assertIn(str(obs["manual_rejected"]).lower(), text.lower())
+            if "numpy_rejected" in obs:
+                self.assertIn(str(obs["numpy_rejected"]).lower(), text.lower())
+        # softmax shift invariance
+        sm = row_map.get(("stable_softmax_shift_invariance_marker", "verify_relation"))
+        if sm and sm["actual_classification"] == "expected_close":
+            obs = sm["observation"]
+            if obs.get("output_logits") is not None:
+                self.assertIn(json.dumps(obs["output_logits"]), text)
+        # naive softmax
+        naive = row_map.get(("naive_softmax_overflow_marker", "verify_relation"))
+        if naive:
+            obs = naive["observation"]
+            if "naive_has_nonfinite" in obs:
+                self.assertIn(str(obs["naive_has_nonfinite"]).lower(), text.lower())
+        # floating comparison
+        flt = row_map.get(("floating_comparison_policy_marker", "verify_relation"))
+        if flt:
+            obs = flt["observation"]
+            if "exact_equal" in obs:
+                self.assertIn(str(obs["exact_equal"]).lower(), text.lower())
+            if "close_ok" in obs:
+                self.assertIn(str(obs["close_ok"]).lower(), text.lower())
 
     def test_required_non_claims(self):
         for path in ["README.md", "RESULTS.md"]:
@@ -235,40 +299,48 @@ class TestLab(unittest.TestCase):
                 self.assertIn(phrase, text, f"missing non-claim phrase in {path}: {phrase}")
 
     def test_artifact_scanner(self):
-        # scan required committed text files
         required = ["README.md", "RESULTS.md", "cases.json", "observations.json", "run_lab.py", "test_lab.py", "hn_thread_evidence.md", "hn_comments_sanitized.json", ".gitignore"]
-        # VERIFY.md may exist at this point
         if os.path.exists("VERIFY.md"):
             required.append("VERIFY.md")
+        # patterns to reject – expanded coverage
         bad_patterns = [
-            re.compile(r"/home/[^/\s]+"),  # allow scanner pattern
-            re.compile(r"/tmp/[^/\s]*ml-lab", re.I),  # allow scanner pattern
-            re.compile(r"C:\\Users\\", re.I),  # allow scanner pattern
-            re.compile(r"ghp_[A-Za-z0-9]{36}"),  # allow scanner pattern
-            re.compile(r"github_pat_[A-Za-z0-9_]+"),  # allow scanner pattern
-            re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{20,}"),  # allow scanner pattern
-            re.compile(r"AKIA[0-9A-Z]{16}"),  # allow scanner pattern
+            (re.compile(r"/home/[^/\s]+"), "home path"),  # allow scanner pattern
+            (re.compile(r"/tmp/[^/\s]*ml-lab", re.I), "tmp ml-lab path"),  # allow scanner pattern
+            (re.compile(r"/clean-checkout"), "clean-checkout path"),  # allow scanner pattern
+            (re.compile(r"C:\\Users\\", re.I), "windows user path"),  # allow scanner pattern
+            (re.compile(r"C:\\", re.I), "windows absolute path"),  # allow scanner pattern
+            (re.compile(r"ghp_[A-Za-z0-9]{36}"), "github pat"),  # allow scanner pattern
+            (re.compile(r"github_pat_[A-Za-z0-9_]+"), "github fine-grained pat"),  # allow scanner pattern
+            (re.compile(r"\bgho_[A-Za-z0-9]+"), "github oauth"),  # allow scanner pattern
+            (re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{20,}"), "bearer token"),  # allow scanner pattern
+            (re.compile(r"AKIA[0-9A-Z]{16}"), "aws access key"),  # allow scanner pattern
+            (re.compile(r"sk-live-[A-Za-z0-9]+"), "secret key"),  # allow scanner pattern
+            (re.compile(r"api[_-]?key\s*[:=]\s*['\"][A-Za-z0-9_\-]{20,}['\"]", re.I), "api key assignment"),  # allow scanner pattern
+            (re.compile(r"password\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.I), "password assignment"),  # allow scanner pattern
+            (re.compile(r"token\s*[:=]\s*['\"][A-Za-z0-9_\-\.]{20,}['\"]", re.I), "token assignment"),  # allow scanner pattern
+            (re.compile(r"0x[0-9a-fA-F]{8,}"), "object address"),  # allow scanner pattern
+            (re.compile(r"\b[a-zA-Z0-9_-]+\.openclaw\.workspace\b"), "workspace path"),  # allow scanner pattern
+            (re.compile(r"process id[:\s]+\d{4,}", re.I), "process id"),  # allow scanner pattern
+            (re.compile(r"pid\s*[:=]\s*\d{4,}", re.I), "pid"),  # allow scanner pattern
+            (re.compile(r"hostname\s*[:=]\s*\S+", re.I), "hostname"),  # allow scanner pattern
+            (re.compile(r"Traceback \(most recent call last\):.*File \"/", re.S), "traceback with path"),  # allow scanner pattern
+            (re.compile(r"USER\s*=\s*\S+@\S+"), "user env dump"),  # allow scanner pattern
+            (re.compile(r"HOME\s*=\s*/"), "home env dump"),  # allow scanner pattern
+            (re.compile(r"PATH\s*=\s*.*:/home/", re.I), "path env dump"),  # allow scanner pattern
         ]
-        obj_addr = re.compile(r"0x[0-9a-fA-F]{8,}")
         for path in required:
             self.assertTrue(os.path.exists(path), path)
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-            if path != "test_lab.py":
-                for pat in bad_patterns:
-                    m = pat.search(content)
-                    self.assertIsNone(m, f"{path} contains disallowed pattern {pat.pattern}: {m.group(0) if m else ''}")
-                self.assertIsNone(obj_addr.search(content), f"{path} contains object address")
-            else:
-                # test_lab.py – allow scanner pattern lines with "allow scanner pattern"
-                for lineno, line in enumerate(content.splitlines(), 1):
-                    for pat in bad_patterns:
-                        if pat.search(line):
-                            self.assertTrue("allow scanner pattern" in line.lower(),
-                                            f"test_lab.py line {lineno} pattern {pat.pattern} without allowance")
-                    if obj_addr.search(line):
-                        self.assertTrue("object-address" in line.lower() or "allow" in line.lower(),
-                                        f"test_lab.py line {lineno} object address without allowance")
+            # scan line by line with narrow allowances
+            for lineno, line in enumerate(content.splitlines(), 1):
+                for pat, desc in bad_patterns:
+                    if pat.search(line):
+                        if "allow scanner pattern" in line.lower():
+                            continue
+                        if desc == "object address" and ("object-address" in line.lower() or "allow" in line.lower()):
+                            continue
+                        self.fail(f"{path}:{lineno} contains {desc}: {line[:120]!r}")
 
 if __name__ == "__main__":
     unittest.main()
