@@ -1,0 +1,12 @@
+__pycache__/
+**pycache**/
+*.pyc
+*.npy
+*.npz
+*.pkl
+*.pickle
+.coverage
+htmlcov/
+# temporary regenerated evidence files
+*.tmp
+/clean-checkout

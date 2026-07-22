@@ -1,0 +1,377 @@
+[
+  {
+    "case_id": "runtime_and_dependency_marker",
+    "method_id": "inspect_inputs",
+    "expected_classification": "local_observation",
+    "actual_classification": "local_observation",
+    "observation": {}
+  },
+  {
+    "case_id": "runtime_and_dependency_marker",
+    "method_id": "execute_case",
+    "expected_classification": "local_observation",
+    "actual_classification": "local_observation",
+    "observation": {
+      "python_version": "3.12.3",
+      "python_implementation": "CPython",
+      "os_family": "Linux",
+      "numpy_available": true,
+      "numpy_version": "2.4.6",
+      "case_count": 7,
+      "method_count": 3,
+      "row_count": 21,
+      "rtol": 1e-12,
+      "atol": 1e-12,
+      "fixed_input_names": [
+        "matrix_vector_reference",
+        "matrix_vector_shape_mismatch",
+        "softmax_logits",
+        "softmax_shifted",
+        "floating_comparison"
+      ]
+    }
+  },
+  {
+    "case_id": "runtime_and_dependency_marker",
+    "method_id": "verify_relation",
+    "expected_classification": "context_only",
+    "actual_classification": "context_only",
+    "observation": {}
+  },
+  {
+    "case_id": "matrix_vector_reference_marker",
+    "method_id": "inspect_inputs",
+    "expected_classification": "local_observation",
+    "actual_classification": "local_observation",
+    "observation": {
+      "matrix": [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ]
+      ],
+      "vector": [
+        5,
+        6
+      ],
+      "expected": [
+        17,
+        39
+      ]
+    }
+  },
+  {
+    "case_id": "matrix_vector_reference_marker",
+    "method_id": "execute_case",
+    "expected_classification": "pass",
+    "actual_classification": "pass",
+    "observation": {
+      "matrix": [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ]
+      ],
+      "vector": [
+        5,
+        6
+      ],
+      "manual_result": [
+        17.0,
+        39.0
+      ],
+      "numpy_result": [
+        17.0,
+        39.0
+      ],
+      "expected_result": [
+        17,
+        39
+      ],
+      "manual_shape": [
+        2
+      ],
+      "numpy_shape": [
+        2
+      ],
+      "manual_dtype": "float64",
+      "numpy_dtype": "float64"
+    }
+  },
+  {
+    "case_id": "matrix_vector_reference_marker",
+    "method_id": "verify_relation",
+    "expected_classification": "expected_equal",
+    "actual_classification": "expected_equal",
+    "observation": {
+      "shape_match": true,
+      "exact_equal_manual_expected": true,
+      "exact_equal_manual_numpy": true,
+      "manual_result": [
+        17.0,
+        39.0
+      ],
+      "numpy_result": [
+        17.0,
+        39.0
+      ]
+    }
+  },
+  {
+    "case_id": "matrix_vector_shape_contract_marker",
+    "method_id": "inspect_inputs",
+    "expected_classification": "local_observation",
+    "actual_classification": "local_observation",
+    "observation": {
+      "matrix": [
+        [
+          1,
+          2,
+          3
+        ],
+        [
+          4,
+          5,
+          6
+        ]
+      ],
+      "vector": [
+        7,
+        8
+      ]
+    }
+  },
+  {
+    "case_id": "matrix_vector_shape_contract_marker",
+    "method_id": "execute_case",
+    "expected_classification": "pass",
+    "actual_classification": "pass",
+    "observation": {
+      "manual_rejected": true,
+      "manual_exception": "ValueError",
+      "numpy_rejected": true,
+      "numpy_exception": "ValueError",
+      "reason": "shape contract"
+    }
+  },
+  {
+    "case_id": "matrix_vector_shape_contract_marker",
+    "method_id": "verify_relation",
+    "expected_classification": "expected_rejection",
+    "actual_classification": "expected_rejection",
+    "observation": {
+      "manual_rejected": true,
+      "numpy_rejected": true
+    }
+  },
+  {
+    "case_id": "stable_softmax_shift_invariance_marker",
+    "method_id": "inspect_inputs",
+    "expected_classification": "local_observation",
+    "actual_classification": "local_observation",
+    "observation": {
+      "logits": [
+        1000,
+        1001,
+        1002
+      ],
+      "shifted": [
+        0,
+        1,
+        2
+      ],
+      "rtol": 1e-12,
+      "atol": 1e-12
+    }
+  },
+  {
+    "case_id": "stable_softmax_shift_invariance_marker",
+    "method_id": "execute_case",
+    "expected_classification": "pass",
+    "actual_classification": "pass",
+    "observation": {
+      "logits": [
+        1000,
+        1001,
+        1002
+      ],
+      "shifted": [
+        0,
+        1,
+        2
+      ],
+      "output_logits": [
+        0.09003057317038046,
+        0.24472847105479764,
+        0.6652409557748218
+      ],
+      "output_shifted": [
+        0.09003057317038046,
+        0.24472847105479764,
+        0.6652409557748218
+      ],
+      "output1_finite": true,
+      "output2_finite": true,
+      "sum1": 0.9999999999999999,
+      "sum2": 0.9999999999999999,
+      "input_logits_mutated": false,
+      "input_shifted_mutated": false
+    }
+  },
+  {
+    "case_id": "stable_softmax_shift_invariance_marker",
+    "method_id": "verify_relation",
+    "expected_classification": "expected_close",
+    "actual_classification": "expected_close",
+    "observation": {
+      "finite": true,
+      "sum1_close_to_one": true,
+      "sum2_close_to_one": true,
+      "close_match": true,
+      "input_unmutated": true,
+      "output_logits": [
+        0.09003057317038046,
+        0.24472847105479764,
+        0.6652409557748218
+      ],
+      "output_shifted": [
+        0.09003057317038046,
+        0.24472847105479764,
+        0.6652409557748218
+      ]
+    }
+  },
+  {
+    "case_id": "naive_softmax_overflow_marker",
+    "method_id": "inspect_inputs",
+    "expected_classification": "local_observation",
+    "actual_classification": "local_observation",
+    "observation": {
+      "logits": [
+        1000,
+        1001,
+        1002
+      ]
+    }
+  },
+  {
+    "case_id": "naive_softmax_overflow_marker",
+    "method_id": "execute_case",
+    "expected_classification": "pass",
+    "actual_classification": "pass",
+    "observation": {
+      "naive_result": [
+        null,
+        null,
+        null
+      ],
+      "naive_finite_mask": [
+        false,
+        false,
+        false
+      ],
+      "stable_result": [
+        0.09003057317038046,
+        0.24472847105479764,
+        0.6652409557748218
+      ],
+      "stable_finite_mask": [
+        true,
+        true,
+        true
+      ],
+      "stable_sum": 0.9999999999999999
+    }
+  },
+  {
+    "case_id": "naive_softmax_overflow_marker",
+    "method_id": "verify_relation",
+    "expected_classification": "expected_nonfinite",
+    "actual_classification": "expected_nonfinite",
+    "observation": {
+      "naive_has_nonfinite": true,
+      "stable_all_finite": true,
+      "stable_sum_close_to_one": true,
+      "naive_finite_mask": [
+        false,
+        false,
+        false
+      ]
+    }
+  },
+  {
+    "case_id": "floating_comparison_policy_marker",
+    "method_id": "inspect_inputs",
+    "expected_classification": "local_observation",
+    "actual_classification": "local_observation",
+    "observation": {
+      "left": [
+        0.30000000000000004,
+        1
+      ],
+      "right": [
+        0.3,
+        1
+      ],
+      "left_expr": "0.1 + 0.2",
+      "right_expr": "0.3"
+    }
+  },
+  {
+    "case_id": "floating_comparison_policy_marker",
+    "method_id": "execute_case",
+    "expected_classification": "pass",
+    "actual_classification": "pass",
+    "observation": {
+      "left": [
+        0.30000000000000004,
+        1
+      ],
+      "right": [
+        0.3,
+        1
+      ],
+      "exact_equal": false,
+      "close_ok": true
+    }
+  },
+  {
+    "case_id": "floating_comparison_policy_marker",
+    "method_id": "verify_relation",
+    "expected_classification": "expected_close",
+    "actual_classification": "expected_close",
+    "observation": {
+      "exact_equal": false,
+      "close_ok": true
+    }
+  },
+  {
+    "case_id": "no_learning_interview_or_production_validity_claim_marker",
+    "method_id": "inspect_inputs",
+    "expected_classification": "context_only",
+    "actual_classification": "context_only",
+    "observation": {}
+  },
+  {
+    "case_id": "no_learning_interview_or_production_validity_claim_marker",
+    "method_id": "execute_case",
+    "expected_classification": "context_only",
+    "actual_classification": "context_only",
+    "observation": {}
+  },
+  {
+    "case_id": "no_learning_interview_or_production_validity_claim_marker",
+    "method_id": "verify_relation",
+    "expected_classification": "context_only",
+    "actual_classification": "context_only",
+    "observation": {}
+  }
+]
