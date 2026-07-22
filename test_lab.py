@@ -298,52 +298,144 @@ class TestLab(unittest.TestCase):
             for phrase in must_have:
                 self.assertIn(phrase, text, f"missing non-claim phrase in {path}: {phrase}")
 
+    # --- artifact scanner with explicit allowlist ---
+
+    def _scan_patterns(self):
+        """Return list of (compiled_regex, desc)."""
+        return [
+            (re.compile(r"/home/[^\s]+"), "home path"),
+            (re.compile(r"/tmp/\S+"), "tmp path"),
+            (re.compile(r"/clean-checkout"), "clean-checkout path"),
+            (re.compile(r"[A-Za-z]:\\[^\s]+"), "windows absolute path"),
+            (re.compile(r"ghp_[A-Za-z0-9]{36}"), "github pat"),
+            (re.compile(r"github_pat_[A-Za-z0-9_]+"), "github fine-grained pat"),
+            (re.compile(r"\bgho_[A-Za-z0-9]+"), "github oauth"),
+            (re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{20,}"), "bearer token"),
+            (re.compile(r"AKIA[0-9A-Z]{16}"), "aws access key"),
+            (re.compile(r"sk-live-[A-Za-z0-9]+"), "secret key"),
+            (re.compile(r"api[_-]?key\s*[:=]\s*['\"][A-Za-z0-9_\-]{20,}['\"]", re.I), "api key assignment"),
+            (re.compile(r"password\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.I), "password assignment"),
+            (re.compile(r"token\s*[:=]\s*['\"][A-Za-z0-9_\-\.]{20,}['\"]", re.I), "token assignment"),
+            (re.compile(r"0x[0-9a-fA-F]{7,}"), "object address"),
+            (re.compile(r"/[^\s]*openclaw[^\s]*", re.I), "workspace path"),
+            (re.compile(r"/[^\s]*\.openclaw[^\s]*", re.I), "workspace path"),
+            (re.compile(r"\bpid[=:]\s*\d+", re.I), "pid"),
+            (re.compile(r"process[_\s]*id\s*[:=]\s*\d+", re.I), "process id"),
+            (re.compile(r"\[\d{4,}\]"), "pid bracket"),
+            (re.compile(r"hostname\s*[:=]\s*[^\s]+", re.I), "hostname"),
+            (re.compile(r"\bhost\s*[:=]\s*[a-zA-Z0-9.-]+\b", re.I), "hostname"),
+            (re.compile(r"\bUSER\s*=\s*\S+@\S+"), "user env dump"),
+            (re.compile(r"\bHOME\s*=\s*/[^\s]+"), "home env dump"),
+            (re.compile(r"\bPATH\s*=\s*[^\n]*:/home/", re.I), "path env dump"),
+        ]
+
+    def _scan_full_content_patterns(self):
+        """Patterns that must scan full file content (multi-line)."""
+        return [
+            (re.compile(r"Traceback \(most recent call last\):.*?File \"[^\"]+\"", re.S), "traceback with path"),
+        ]
+
+    def _scan_file_content(self, path, content, allowlist=None):
+        """Return list of (lineno, desc, match_text) violations found in content.
+        allowlist is a set of (file, lineno, desc) tuples that are explicitly permitted.
+        """
+        if allowlist is None:
+            allowlist = set()
+        patterns = self._scan_patterns()
+        full_content_patterns = self._scan_full_content_patterns()
+        violations = []
+        # full-content scan first (tracebacks)
+        for pat, desc in full_content_patterns:
+            m = pat.search(content)
+            if m:
+                # allowlist check – line 1 for full-content matches
+                if (path, 1, desc) in allowlist:
+                    continue
+                violations.append((1, desc, m.group(0)[:80]))
+        # line-by-line scan
+        for lineno, line in enumerate(content.splitlines(), 1):
+            for pat, desc in patterns:
+                m = pat.search(line)
+                if not m:
+                    continue
+                if (path, lineno, desc) in allowlist:
+                    continue
+                violations.append((lineno, desc, m.group(0)[:80]))
+        return violations
+
     def test_artifact_scanner(self):
         required = ["README.md", "RESULTS.md", "cases.json", "observations.json", "run_lab.py", "test_lab.py", "hn_thread_evidence.md", "hn_comments_sanitized.json", ".gitignore"]
         if os.path.exists("VERIFY.md"):
             required.append("VERIFY.md")
-        # patterns to reject – expanded coverage
-        bad_patterns = [
-            (re.compile(r"/home/[^/\s]+"), "home path"),  # allow scanner pattern
-            (re.compile(r"/tmp/[^/\s]*ml-lab", re.I), "tmp ml-lab path"),  # allow scanner pattern
-            (re.compile(r"/clean-checkout"), "clean-checkout path"),  # allow scanner pattern
-            (re.compile(r"C:\\Users\\", re.I), "windows user path"),  # allow scanner pattern
-            (re.compile(r"C:\\", re.I), "windows absolute path"),  # allow scanner pattern
-            (re.compile(r"ghp_[A-Za-z0-9]{36}"), "github pat"),  # allow scanner pattern
-            (re.compile(r"github_pat_[A-Za-z0-9_]+"), "github fine-grained pat"),  # allow scanner pattern
-            (re.compile(r"\bgho_[A-Za-z0-9]+"), "github oauth"),  # allow scanner pattern
-            (re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{20,}"), "bearer token"),  # allow scanner pattern
-            (re.compile(r"AKIA[0-9A-Z]{16}"), "aws access key"),  # allow scanner pattern
-            (re.compile(r"sk-live-[A-Za-z0-9]+"), "secret key"),  # allow scanner pattern
-            (re.compile(r"api[_-]?key\s*[:=]\s*['\"][A-Za-z0-9_\-]{20,}['\"]", re.I), "api key assignment"),  # allow scanner pattern
-            (re.compile(r"password\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.I), "password assignment"),  # allow scanner pattern
-            (re.compile(r"token\s*[:=]\s*['\"][A-Za-z0-9_\-\.]{20,}['\"]", re.I), "token assignment"),  # allow scanner pattern
-            (re.compile(r"0x[0-9a-fA-F]{8,}"), "object address"),  # allow scanner pattern
-            (re.compile(r"\b[a-zA-Z0-9_-]+\.openclaw\.workspace\b"), "workspace path"),  # allow scanner pattern
-            (re.compile(r"process id[:\s]+\d{4,}", re.I), "process id"),  # allow scanner pattern
-            (re.compile(r"pid\s*[:=]\s*\d{4,}", re.I), "pid"),  # allow scanner pattern
-            (re.compile(r"hostname\s*[:=]\s*\S+", re.I), "hostname"),  # allow scanner pattern
-            (re.compile(r"Traceback \(most recent call last\):.*File \"/", re.S), "traceback with path"),  # allow scanner pattern
-            (re.compile(r"USER\s*=\s*\S+@\S+"), "user env dump"),  # allow scanner pattern
-            (re.compile(r"HOME\s*=\s*/"), "home env dump"),  # allow scanner pattern
-            (re.compile(r"PATH\s*=\s*.*:/home/", re.I), "path env dump"),  # allow scanner pattern
-        ]
+        # explicit allowlist: (file, lineno, desc)
+        # each entry permits one specific pattern match at an exact file location
+        ALLOWLIST = {
+            # test_lab.py – pattern definitions that self-match
+            ("test_lab.py", 306, "home path"),
+            ("test_lab.py", 307, "tmp path"),
+            ("test_lab.py", 308, "clean-checkout path"),
+            ("test_lab.py", 320, "workspace path"),
+            ("test_lab.py", 321, "workspace path"),
+            ("test_lab.py", 329, "home path"),
+            # test_lab.py – negative test case strings in test_artifact_scanner_negative
+            ("test_lab.py", 411, "home path"),
+            ("test_lab.py", 412, "tmp path"),
+            ("test_lab.py", 413, "github pat"),
+            ("test_lab.py", 414, "aws access key"),
+            ("test_lab.py", 415, "token assignment"),
+            ("test_lab.py", 416, "password assignment"),
+            ("test_lab.py", 417, "object address"),
+            ("test_lab.py", 418, "home path"),
+            ("test_lab.py", 418, "workspace path"),
+            ("test_lab.py", 419, "pid"),
+            ("test_lab.py", 420, "hostname"),
+            ("test_lab.py", 435, "tmp path"),
+            # .gitignore – intentional clean-checkout ignore
+            (".gitignore", 12, "clean-checkout path"),
+            # VERIFY.md – documented clone/checkout commands
+            ("VERIFY.md", 10, "clean-checkout path"),
+            ("VERIFY.md", 11, "clean-checkout path"),
+            ("VERIFY.md", 12, "clean-checkout path"),
+        }
         for path in required:
             self.assertTrue(os.path.exists(path), path)
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-            # scan line by line with narrow allowances
-            for lineno, line in enumerate(content.splitlines(), 1):
-                for pat, desc in bad_patterns:
-                    if pat.search(line):
-                        if "allow scanner pattern" in line.lower():
-                            continue
-                        if desc == "object address" and ("object-address" in line.lower() or "allow" in line.lower()):
-                            continue
-                        # /clean-checkout is an intentional documentation placeholder in VERIFY.md / README.md  # allow scanner pattern
-                        if desc == "clean-checkout path" and path in ("VERIFY.md", "README.md", "hn_thread_evidence.md"):
-                            continue
-                        self.fail(f"{path}:{lineno} contains {desc}: {line[:120]!r}")
+            violations = self._scan_file_content(path, content, allowlist=ALLOWLIST)
+            self.assertEqual(violations, [], f"{path} scanner violations: {violations}")
+
+    def test_artifact_scanner_negative(self):
+        """Verify scanner rejects prohibited content even with 'allow scanner pattern' marker."""
+        # Test cases: (forbidden_text, expected_desc)
+        test_cases = [
+            ("/home/alice/secrets.txt", "home path"),
+            ("/tmp/evil12345/payload", "tmp path"),
+            ("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "github pat"),
+            ("AKIAIOSFODNN7EXAMPLE", "aws access key"),
+            ('token = "abc123def456ghi789jkl0"', "token assignment"),
+            ('password = "hunter2"', "password assignment"),
+            ("0x7f8b1c2d3e4f", "object address"),
+            ("/home/ubuntu/.openclaw/workspace/keys", "workspace path"),
+            ("pid=12345", "pid"),
+            ("hostname = buildbox-07", "hostname"),
+        ]
+        for forbidden, expected_desc in test_cases:
+            # Test without marker – must be caught
+            content = f"some text {forbidden} more text\n"
+            violations = self._scan_file_content("README.md", content, allowlist=set())
+            self.assertTrue(any(v[1] == expected_desc for v in violations),
+                f"scanner failed to catch {expected_desc}: {forbidden!r}")
+            # Test WITH generic bypass marker – must STILL be caught
+            # (the old scanner had a generic "allow scanner pattern" bypass – that must NOT work)
+            content_marked = f"some text {forbidden}  allow scanner pattern more\n"
+            violations_marked = self._scan_file_content("README.md", content_marked, allowlist=set())
+            self.assertTrue(any(v[1] == expected_desc for v in violations_marked),
+                f"scanner incorrectly allowed {expected_desc} with generic bypass marker: {forbidden!r}")
+        # Test traceback detection across multiple lines
+        tb_content = "Traceback (most recent call last):\n  File \"/tmp/malicious.py\", line 1\n"
+        tb_violations = self._scan_file_content("RESULTS.md", tb_content, allowlist=set())
+        self.assertTrue(any(v[1] == "traceback with path" for v in tb_violations),
+            "scanner failed to catch multi-line traceback")
 
 if __name__ == "__main__":
     unittest.main()

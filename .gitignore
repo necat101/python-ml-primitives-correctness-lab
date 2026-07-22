@@ -9,4 +9,4 @@ __pycache__/
 htmlcov/
 # temporary regenerated evidence files
 *.tmp
-/clean-checkout  # allow scanner pattern
+/clean-checkout
